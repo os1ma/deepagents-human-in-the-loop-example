@@ -14,6 +14,10 @@ def create_my_agent() -> CompiledStateGraph[Any, None, Any, Any]:
     return create_deep_agent(  # type: ignore[no-any-return]
         backend=FilesystemBackend(root_dir=".", virtual_mode=True),
         checkpointer=MemorySaver(),
+        interrupt_on={
+            "write_file": {"allowed_decisions": ["approve", "edit", "reject"]},
+            "edit_file": {"allowed_decisions": ["approve", "edit", "reject"]},
+        },
     )
 
 

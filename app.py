@@ -1,13 +1,20 @@
-from typing import Any
 from uuid import uuid4
 
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
-from langchain_core.runnables import RunnableConfig
-from langgraph.types import Command
 
-from agent import Agent, create_my_agent, get_messages
+from agent import ActionRequest, AgentStreamChunk, MyAgent
+
+
+class UIState:
+    def __init__(self) -> None:
+        self.agent = MyAgent()
+        self.new_thread()
+        self.show_approve_button = False
+
+    def new_thread(self) -> None:
+        self.thread_id = uuid4().hex
 
 
 def show_message(message: BaseMessage) -> None:
@@ -36,24 +43,11 @@ def show_message(message: BaseMessage) -> None:
         raise ValueError(f"Unknown message type: {message}")
 
 
-def show_updates_chunk(chunk: dict[str, Any] | Any) -> None:
-    if "model" in chunk:
-        messages = chunk["model"]["messages"]
-        for m in messages:
-            show_message(m)
-    if "tools" in chunk:
-        messages = chunk["tools"]["messages"]
-        for m in messages:
-            show_message(m)
-
-
-class UIState:
-    def __init__(self) -> None:
-        self.agent: Agent = create_my_agent()
-        self.new_thread()
-
-    def new_thread(self) -> None:
-        self.thread_id = uuid4().hex
+def handle_agent_stream_chunk(chunk: AgentStreamChunk, ui_state: UIState) -> None:
+    if isinstance(chunk, ActionRequest):
+        ui_state.show_approve_button = True
+    else:
+        show_message(chunk)
 
 
 def app() -> None:
@@ -75,76 +69,36 @@ def app() -> None:
     st.write(f"thread_id: {ui_state.thread_id}")
 
     # 会話履歴を表示
-    for m in get_messages(ui_state.agent, ui_state.thread_id):
+    for m in ui_state.agent.get_messages(ui_state.thread_id):
         show_message(m)
 
-    config: RunnableConfig = {"configurable": {"thread_id": ui_state.thread_id}}
-    state = ui_state.agent.get_state(config=config)
-
-    # interrupt中ではない場合
-    if not state.next:
-        # ユーザーの入力を受け付ける
-        human_input = st.chat_input()
-        if not human_input:
-            return
-
-        # ユーザーの入力を表示
-        with st.chat_message("human"):
-            st.write(human_input)
-
-        # エージェントを実行
-        for chunk in ui_state.agent.stream(
-            input={"messages": [HumanMessage(content=human_input)]},
-            config=config,
-            stream_mode="updates",
-        ):
-            show_updates_chunk(chunk)
-
-        # interruptされた可能性があるので再描画
-        st.rerun()
-
-    # interrupt中の場合
-    else:
-        interrupts = state.tasks[0].interrupts[0].value
-        action_requests = interrupts["action_requests"]
-        action_count = len(action_requests)
-
-        # ユーザーの入力を受け付ける
+    # 承認ボタンを表示
+    if ui_state.show_approve_button:
         approved = st.button("承認")
-        human_input = st.chat_input()
+        # 承認されたらエージェントを実行
+        if approved:
+            ui_state.show_approve_button = False
+            with st.spinner():
+                for chunk in ui_state.agent.approve(ui_state.thread_id):
+                    handle_agent_stream_chunk(chunk, ui_state)
+            # 会話履歴を表示するためrerun
+            st.rerun()
 
-        if not approved and not human_input:
-            # どちらも入力されていない場合は何もしない
-            return
+    # ユーザーの指示を受け付ける
+    human_input = st.chat_input()
+    if human_input:
+        with st.spinner():
+            if ui_state.show_approve_button:
+                ui_state.show_approve_button = False
+                for chunk in ui_state.agent.reject(human_input, ui_state.thread_id):
+                    handle_agent_stream_chunk(chunk, ui_state)
 
-        elif approved:
-            # action_requestsの数だけ承認を行う
-            decisions = [{"type": "approve"}] * action_count
-            command: Command[tuple[()]] = Command(resume={"decisions": decisions})
+            else:
+                for chunk in ui_state.agent.stream(human_input, ui_state.thread_id):
+                    handle_agent_stream_chunk(chunk, ui_state)
 
-        elif human_input:
-            # ユーザーの入力を表示
-            with st.chat_message("human"):
-                st.write(human_input)
-
-            # action_requestsの数だけ拒否を行う
-            decisions = [{"type": "reject", "message": human_input}] * action_count
-            command = Command(resume={"decisions": decisions})
-
-        else:
-            raise ValueError(
-                f"Invalid input: approved={approved}, human_input={human_input}",
-            )
-
-        for s in ui_state.agent.stream(
-            input=command,
-            config=config,
-            stream_mode="updates",
-        ):
-            show_updates_chunk(s)
-
-        # 再描画
-        st.rerun()
+            # 会話履歴を表示するためrerun
+            st.rerun()
 
 
 app()

@@ -1,8 +1,10 @@
+from uuid import uuid4
+
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
-from agent import create_my_agent
+from agent import Agent, create_my_agent, get_messages
 
 
 def show_message(message: BaseMessage) -> None:
@@ -31,38 +33,50 @@ def show_message(message: BaseMessage) -> None:
         raise ValueError(f"Unknown message type: {message}")
 
 
+class UIState:
+    def __init__(self) -> None:
+        self.agent: Agent = create_my_agent()
+        self.new_thread()
+
+    def new_thread(self) -> None:
+        self.thread_id = uuid4().hex
+
+
 def app() -> None:
     load_dotenv(override=True)
 
-    st.title("My Agent")
+    # UIStateを初期化
+    if "ui_state" not in st.session_state:
+        st.session_state.ui_state = UIState()
+    ui_state: UIState = st.session_state.ui_state
 
-    # 会話履歴を初期化
-    if "state_messages" not in st.session_state:
-        st.session_state.state_messages = []
-    state_messages: list[BaseMessage] = st.session_state.state_messages
+    with st.sidebar:
+        # 新規スレッドボタン
+        clicked = st.button("新規スレッド")
+        if clicked:
+            ui_state.new_thread()
+            st.rerun()
+
+    st.title("Agent")
+    st.write(f"thread_id: {ui_state.thread_id}")
 
     # 会話履歴を表示
-    for m in state_messages:
+    for m in get_messages(ui_state.agent, ui_state.thread_id):
         show_message(m)
 
     # ユーザーの入力を受け付ける
-    human_message = st.chat_input()
-    if not human_message:
+    human_input = st.chat_input()
+    if not human_input:
         return
 
     # ユーザーの入力を表示
     with st.chat_message("human"):
-        st.write(human_message)
-
-    # ユーザーの入力を会話履歴に追加
-    state_messages.append(HumanMessage(content=human_message))
-
-    # 応答を生成
-    agent = create_my_agent()
+        st.write(human_input)
 
     # エージェントを実行
-    for chunk in agent.stream(
-        {"messages": state_messages},
+    for chunk in ui_state.agent.stream(
+        input={"messages": [HumanMessage(content=human_input)]},
+        config={"configurable": {"thread_id": ui_state.thread_id}},
         stream_mode="updates",
     ):
         if "model" in chunk:

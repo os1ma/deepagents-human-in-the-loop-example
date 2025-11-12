@@ -1,5 +1,3 @@
-.PHONY: all
-all: requirements.txt
-
-requirements.txt: uv.lock
-	uv export -o $@
+.PHONY: streamlit
+streamlit:
+	uv run streamlit run app.py --server.port 8080

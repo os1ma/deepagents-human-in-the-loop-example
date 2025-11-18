@@ -1,11 +1,13 @@
+import sqlite3
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -23,9 +25,12 @@ AgentStreamChunk = AIMessage | ToolMessage | ActionRequest
 
 class MyAgent:
     def __init__(self) -> None:
+        database_path = Path(__file__).parent / "tmp" / "checkpoint.db"
+        checkpointer = SqliteSaver(sqlite3.connect(database_path))
+
         self.agent = create_deep_agent(
             backend=FilesystemBackend(root_dir=".", virtual_mode=True),
-            checkpointer=MemorySaver(),
+            checkpointer=checkpointer,
             interrupt_on={
                 "write_file": {"allowed_decisions": ["approve", "edit", "reject"]},
                 "edit_file": {"allowed_decisions": ["approve", "edit", "reject"]},

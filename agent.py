@@ -26,7 +26,8 @@ AgentStreamChunk = AIMessage | ToolMessage | ActionRequest
 class MyAgent:
     def __init__(self) -> None:
         database_path = Path(__file__).parent / "tmp" / "checkpoint.db"
-        checkpointer = SqliteSaver(sqlite3.connect(database_path))
+        database_conn = sqlite3.connect(database=database_path, check_same_thread=False)
+        checkpointer = SqliteSaver(database_conn)
 
         self.agent = create_deep_agent(
             backend=FilesystemBackend(root_dir=".", virtual_mode=True),
@@ -85,3 +86,8 @@ class MyAgent:
             return state_snapshot.values["messages"]  # type: ignore[no-any-return]
         else:
             return []
+
+    def is_interrupted(self, thread_id: str) -> bool:
+        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+        state = self.agent.get_state(config=config)
+        return bool(state.next)
